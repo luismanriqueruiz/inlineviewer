@@ -53,6 +53,11 @@ viewinline path/to/file.tif --export out.png   # save the rendered image as PNG 
 viewinline scene.tif --rgb 4 3 2 --export rgb.png
 viewinline dem.tif --colormap terrain --display 1 --export dem.png   # full-res with colormap
 
+# Axis and grid overlay
+viewinline path/to/file.tif --grid           # pixel-coordinate ticks + grid (5 divisions)
+viewinline path/to/file.tif --grid 10        # 10 divisions instead of the default 5
+viewinline boundaries.geoparquet --grid      # real coordinate (CRS) ticks + grid for vectors
+
 # CSV and Parquet
 viewinline data.csv                          # preview rows and columns
 viewinline data.parquet --describe           # summary statistics
@@ -189,6 +194,7 @@ General:
   --display DISPLAY     Resize only the displayed image (0.5=smaller, 2=bigger). Default: auto-fit to terminal.
   --info                Print file metadata and statistics as JSON, then exit (agent-facing). For NetCDF/HDF, lists variables; combine with --subset N to inspect one. Always returns JSON, including on error.
   --export PATH         Save the rendered image to PATH (.png/.jpg) and open it. Works with any display flag. Prints {"path": "..."} as the final line.
+  --grid [N]            Overlay coordinate axis ticks and a light grid on the image (N divisions, default 5).
 
 Raster:
   --band BAND           Band number to display (single raster), or slice number for NetCDF. (default: 1)

@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore", message="invalid scale_factor or add_offset at
 _EXPORT_PATH = None
 _EXPORT_RESULT = None
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 AVAILABLE_COLORMAPS = [
     "viridis", "inferno", "magma", "plasma",
@@ -923,6 +923,59 @@ def normalize_to_uint8(band: np.ndarray, vmin=None, vmax=None, nodata=None) -> n
     return (band * 255).astype(np.uint8)
 
 
+def add_axis_and_grid(img: np.ndarray, n_ticks: int = 5) -> np.ndarray:
+    """Overlay pixel-coordinate axis ticks/labels and a light grid on an image.
+
+    Operates on the final (already resized) array, right before display, so
+    ticks reflect the pixel coordinates of the rendered image, not the
+    source raster. Grid lines are alpha-blended so image content stays
+    visible; ticks/labels live in an added margin along the left and
+    bottom edges.
+    """
+    h, w = img.shape[:2]
+    n_ticks = max(1, n_ticks)
+
+    base = Image.fromarray(img).convert("RGBA")
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay)
+    grid_color = (255, 255, 255, 110)
+
+    xs = [min(int(round(i * w / n_ticks)), w - 1) for i in range(n_ticks + 1)]
+    ys = [min(int(round(i * h / n_ticks)), h - 1) for i in range(n_ticks + 1)]
+
+    for x in xs:
+        odraw.line([(x, 0), (x, h - 1)], fill=grid_color, width=1)
+    for y in ys:
+        odraw.line([(0, y), (w - 1, y)], fill=grid_color, width=1)
+
+    composed = Image.alpha_composite(base, overlay).convert("RGB")
+
+    margin_l, margin_b = 42, 22
+    canvas = Image.new("RGB", (w + margin_l, h + margin_b), (24, 24, 24))
+    canvas.paste(composed, (margin_l, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+
+    label_color = (255, 255, 0)
+
+    for x in xs:
+        px = margin_l + x
+        draw.line([(px, h), (px, h + 3)], fill=label_color)
+        draw.text((px + 2, h + 4), str(x), fill=label_color, font=font)
+
+    for y in ys:
+        label = str(y)
+        tw = draw.textlength(label, font=font) if font else len(label) * 6
+        draw.line([(margin_l - 3, y), (margin_l, y)], fill=label_color)
+        draw.text((margin_l - 6 - tw, max(0, y - 5)), label, fill=label_color, font=font)
+
+    return np.array(canvas)
+
+
 def render_simple_image(filepath: str, args) -> None:
     """Render a simple PNG/JPG image using PIL (no geospatial processing)."""
     try:
@@ -945,7 +998,10 @@ def render_simple_image(filepath: str, args) -> None:
         else:
             img_array, scale = resize_to_terminal(img_array)
             print(f"[VIEW] Rendered image size → {img_array.shape[1]}×{img_array.shape[0]}px (size={scale:.2f})")
-        
+
+        if getattr(args, "grid", None):
+            img_array = add_axis_and_grid(img_array, n_ticks=args.grid)
+
         show_image_auto(img_array, getattr(args, "display", None), is_vector=False)
         
     except Exception as e:
@@ -1102,6 +1158,8 @@ def render_netcdf_via_netcdf4(path, args):
                         scale = max_dim / max(H, W)
                         new_w, new_h = int(W * scale), int(H * scale)
                         img = np.array(Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR))
+                if getattr(args, "grid", None):
+                    img = add_axis_and_grid(img, n_ticks=args.grid)
                 show_image_auto(img, getattr(args, "display", None), is_vector=False)
                 return
             except ValueError as e:
@@ -1177,8 +1235,11 @@ def render_netcdf_via_netcdf4(path, args):
             # (matches the width_pct logic in show_inline_image)
                 display_pct = args.display if args.display is not None else 0.33
             
-                print(f"[VIEW] Rendered image size → {img.shape[1]}×{img.shape[0]}px (size={display_pct:.2f})")  
-       
+                print(f"[VIEW] Rendered image size → {img.shape[1]}×{img.shape[0]}px (size={display_pct:.2f})")
+
+    if getattr(args, "grid", None):
+        img = add_axis_and_grid(img, n_ticks=args.grid)
+
     show_image_auto(img, getattr(args, "display", None), is_vector=False)
 
 def render_raster(paths: list[str], args) -> None:
@@ -1395,6 +1456,9 @@ def render_raster(paths: list[str], args) -> None:
         else:
             img, scale = resize_to_terminal(img)
             print(f"[VIEW] Rendered image size → {img.shape[1]}×{img.shape[0]}px (size={scale:.2f})")
+
+        if getattr(args, "grid", None):
+            img = add_axis_and_grid(img, n_ticks=args.grid)
 
         # Use unified display
         show_image_auto(img, getattr(args, "display", None), is_vector=False)
@@ -1648,7 +1712,17 @@ def render_vector(path, args):
     # Figure setup
     fig, ax = plt.subplots(figsize=(6, 6), dpi=150, facecolor="gray")
     ax.set_facecolor("gray")
-    ax.set_axis_off()
+    show_grid = getattr(args, "grid", None)
+    if show_grid:
+        # Keep axis on: real coordinate ticks (CRS units) plus a light grid,
+        # instead of the pixel-based overlay used for raster images.
+        ax.tick_params(colors="white", labelsize=6)
+        for spine in ax.spines.values():
+            spine.set_color("white")
+        ax.locator_params(nbins=show_grid)
+        ax.grid(True, color="white", alpha=0.3, linewidth=0.5)
+    else:
+        ax.set_axis_off()
 
     # Determine colormap
     column = args.color_by if args.color_by in gdf.columns else None
@@ -1965,6 +2039,10 @@ def main() -> None:
     
     general.add_argument("--export", metavar="PATH", default=None,
     help="Also save the displayed image to PATH (.png/.jpg). Prints {\"path\": ...}.")
+    general.add_argument(
+        "--grid", nargs="?", type=int, const=5, default=None, metavar="N",
+        help="Overlay coordinate axis ticks and a light grid on the image (N divisions, default 5)."
+    )
 
     # Raster options
     raster = parser.add_argument_group("Raster")
