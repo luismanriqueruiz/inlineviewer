@@ -54,9 +54,10 @@ viewinline scene.tif --rgb 4 3 2 --export rgb.png
 viewinline dem.tif --colormap terrain --display 1 --export dem.png   # full-res with colormap
 
 # Axis and grid overlay
-viewinline path/to/file.tif --grid           # pixel-coordinate ticks + grid (5 divisions)
+viewinline path/to/file.tif --grid           # ticks + grid in the raster's CRS units (5 divisions)
 viewinline path/to/file.tif --grid 10        # 10 divisions instead of the default 5
-viewinline boundaries.geoparquet --grid      # real coordinate (CRS) ticks + grid for vectors
+viewinline boundaries.geoparquet --grid      # ticks + grid in the vector's CRS units
+viewinline photo.png --grid                  # pixel positions (no CRS)
 
 # CSV and Parquet
 viewinline data.csv                          # preview rows and columns
@@ -194,7 +195,7 @@ General:
   --display DISPLAY     Resize only the displayed image (0.5=smaller, 2=bigger). Default: auto-fit to terminal.
   --info                Print file metadata and statistics as JSON, then exit (agent-facing). For NetCDF/HDF, lists variables; combine with --subset N to inspect one. Always returns JSON, including on error.
   --export PATH         Save the rendered image to PATH (.png/.jpg) and open it. Works with any display flag. Prints {"path": "..."} as the final line.
-  --grid [N]            Overlay coordinate axis ticks and a light grid on the image (N divisions, default 5).
+  --grid [N]            Overlay axis ticks and a light grid (N divisions, default 5). Labels are in the file's CRS units (degrees or metres) for georeferenced rasters and vectors; pixel positions for PNG/JPG, NetCDF, and non-georeferenced files.
 
 Raster:
   --band BAND           Band number to display (single raster), or slice number for NetCDF. (default: 1)

@@ -923,58 +923,122 @@ def normalize_to_uint8(band: np.ndarray, vmin=None, vmax=None, nodata=None) -> n
     return (band * 255).astype(np.uint8)
 
 
-def add_axis_and_grid(img: np.ndarray, n_ticks: int = 5) -> np.ndarray:
-    """Overlay pixel-coordinate axis ticks/labels and a light grid on an image.
+# def add_axis_and_grid(img: np.ndarray, n_ticks: int = 5) -> np.ndarray:
+#     """Overlay pixel-coordinate axis ticks/labels and a light grid on an image.
 
-    Operates on the final (already resized) array, right before display, so
-    ticks reflect the pixel coordinates of the rendered image, not the
-    source raster. Grid lines are alpha-blended so image content stays
-    visible; ticks/labels live in an added margin along the left and
-    bottom edges.
+#     Operates on the final (already resized) array, right before display, so
+#     ticks reflect the pixel coordinates of the rendered image, not the
+#     source raster. Grid lines are alpha-blended so image content stays
+#     visible; ticks/labels live in an added margin along the left and
+#     bottom edges.
+#     """
+#     h, w = img.shape[:2]
+#     n_ticks = max(1, n_ticks)
+
+#     base = Image.fromarray(img).convert("RGBA")
+#     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+#     odraw = ImageDraw.Draw(overlay)
+#     grid_color = (255, 255, 255, 110)
+
+#     xs = [min(int(round(i * w / n_ticks)), w - 1) for i in range(n_ticks + 1)]
+#     ys = [min(int(round(i * h / n_ticks)), h - 1) for i in range(n_ticks + 1)]
+
+#     for x in xs:
+#         odraw.line([(x, 0), (x, h - 1)], fill=grid_color, width=1)
+#     for y in ys:
+#         odraw.line([(0, y), (w - 1, y)], fill=grid_color, width=1)
+
+#     composed = Image.alpha_composite(base, overlay).convert("RGB")
+
+#     margin_l, margin_b, margin_r = 42, 22, 30
+#     canvas = Image.new("RGB", (w + margin_l + margin_r, h + margin_b), (24, 24, 24))
+#     canvas.paste(composed, (margin_l, 0))
+#     draw = ImageDraw.Draw(canvas)
+
+#     try:
+#         font = ImageFont.load_default()
+#     except Exception:
+#         font = None
+
+#     label_color = (255, 255, 0)
+
+#     for x in xs:
+#         px = margin_l + x
+#         draw.line([(px, h), (px, h + 3)], fill=label_color)
+#         draw.text((px + 2, h + 4), str(x), fill=label_color, font=font)
+
+#     for y in ys:
+#         label = str(y)
+#         tw = draw.textlength(label, font=font) if font else len(label) * 6
+#         draw.line([(margin_l - 3, y), (margin_l, y)], fill=label_color)
+#         draw.text((margin_l - 6 - tw, max(0, y - 5)), label, fill=label_color, font=font)
+
+#     return np.array(canvas)
+
+def add_axis_and_grid(img: np.ndarray, n_ticks: int = 5, bounds=None) -> np.ndarray:
+    """Overlay axis ticks/labels and a light grid on an image.
+
+    If ``bounds`` (left, bottom, right, top) is given, labels show real map
+    coordinates in the raster's CRS. Otherwise they show pixel positions of
+    the rendered image (used for plain photos and non-georeferenced files).
     """
     h, w = img.shape[:2]
     n_ticks = max(1, n_ticks)
+    fracs = [i / n_ticks for i in range(n_ticks + 1)]
+
+    xs = [min(int(round(f * w)), w - 1) for f in fracs]
+    ys = [min(int(round(f * h)), h - 1) for f in fracs]
+
+    if bounds is not None:
+        left, bottom, right, top = bounds
+        step = max(abs(right - left), abs(top - bottom)) / n_ticks
+        # Enough decimals to tell neighbouring ticks apart (0 for metres, ~2-4 for degrees)
+        decimals = 0 if step >= 10 else max(0, int(-np.floor(np.log10(step))) + 1)
+        x_labels = [f"{left + f * (right - left):.{decimals}f}" for f in fracs]
+        y_labels = [f"{top - f * (top - bottom):.{decimals}f}" for f in fracs]
+    else:
+        x_labels = [str(x) for x in xs]
+        y_labels = [str(y) for y in ys]
 
     base = Image.fromarray(img).convert("RGBA")
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay)
     grid_color = (255, 255, 255, 110)
-
-    xs = [min(int(round(i * w / n_ticks)), w - 1) for i in range(n_ticks + 1)]
-    ys = [min(int(round(i * h / n_ticks)), h - 1) for i in range(n_ticks + 1)]
-
     for x in xs:
         odraw.line([(x, 0), (x, h - 1)], fill=grid_color, width=1)
     for y in ys:
         odraw.line([(0, y), (w - 1, y)], fill=grid_color, width=1)
-
     composed = Image.alpha_composite(base, overlay).convert("RGB")
-
-    margin_l, margin_b = 42, 22
-    canvas = Image.new("RGB", (w + margin_l, h + margin_b), (24, 24, 24))
-    canvas.paste(composed, (margin_l, 0))
-    draw = ImageDraw.Draw(canvas)
 
     try:
         font = ImageFont.load_default()
     except Exception:
         font = None
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
+    def text_w(s):
+        return probe.textlength(s, font=font) if font else len(s) * 6
+
+    # Margins sized to the longest labels so nothing gets clipped
+    margin_l = int(max(text_w(s) for s in y_labels)) + 10
+    margin_r = int(text_w(x_labels[-1])) + 6
+    margin_b = 22
+
+    canvas = Image.new("RGB", (w + margin_l + margin_r, h + margin_b), (24, 24, 24))
+    canvas.paste(composed, (margin_l, 0))
+    draw = ImageDraw.Draw(canvas)
     label_color = (255, 255, 0)
 
-    for x in xs:
+    for x, label in zip(xs, x_labels):
         px = margin_l + x
         draw.line([(px, h), (px, h + 3)], fill=label_color)
-        draw.text((px + 2, h + 4), str(x), fill=label_color, font=font)
+        draw.text((px + 2, h + 4), label, fill=label_color, font=font)
 
-    for y in ys:
-        label = str(y)
-        tw = draw.textlength(label, font=font) if font else len(label) * 6
+    for y, label in zip(ys, y_labels):
         draw.line([(margin_l - 3, y), (margin_l, y)], fill=label_color)
-        draw.text((margin_l - 6 - tw, max(0, y - 5)), label, fill=label_color, font=font)
+        draw.text((margin_l - 6 - text_w(label), max(0, y - 5)), label, fill=label_color, font=font)
 
     return np.array(canvas)
-
 
 def render_simple_image(filepath: str, args) -> None:
     """Render a simple PNG/JPG image using PIL (no geospatial processing)."""
@@ -1316,6 +1380,7 @@ def render_raster(paths: list[str], args) -> None:
             # Continue with normal raster opening
             with rasterio.open(path) as ds:
                 H, W = ds.height, ds.width
+                grid_bounds = tuple(ds.bounds) if ds.crs is not None else None 
                 print(f"[DATA] Raster loaded: {os.path.basename(paths[0])} ({W}×{H})")
                 band_count = ds.count
                 
@@ -1433,6 +1498,7 @@ def render_raster(paths: list[str], args) -> None:
             for p in paths:
                 with rasterio.open(p) as ds:
                     bands.append(ds.read(1))
+                    grid_bounds = tuple(ds.bounds) if ds.crs is not None else None
             shapes = {b.shape for b in bands}
             if len(shapes) != 1:
                 print("[ERROR] Raster sizes do not match.")
@@ -1458,7 +1524,8 @@ def render_raster(paths: list[str], args) -> None:
             print(f"[VIEW] Rendered image size → {img.shape[1]}×{img.shape[0]}px (size={scale:.2f})")
 
         if getattr(args, "grid", None):
-            img = add_axis_and_grid(img, n_ticks=args.grid)
+            # img = add_axis_and_grid(img, n_ticks=args.grid)
+            img = add_axis_and_grid(img, n_ticks=args.grid, bounds=grid_bounds)
 
         # Use unified display
         show_image_auto(img, getattr(args, "display", None), is_vector=False)
@@ -1721,6 +1788,7 @@ def render_vector(path, args):
             spine.set_color("white")
         ax.locator_params(nbins=show_grid)
         ax.grid(True, color="white", alpha=0.3, linewidth=0.5)
+        ax.ticklabel_format(style="plain", useOffset=False)
     else:
         ax.set_axis_off()
 
